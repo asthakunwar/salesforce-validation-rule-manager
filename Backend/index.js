@@ -1,135 +1,82 @@
-require('dotenv').config();
-const express = require('express');
-const axios = require('axios');
-const cors = require('cors');
-const crypto = require('crypto');
+const express = require("express");
+const cors = require("cors");
+const axios = require("axios");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = 5000;
-
-let codeVerifier = '';
-
-// 🔐 Step 1: Redirect to Salesforce Login (PKCE Enabled)
-app.get('/login', (req, res) => {
-  codeVerifier = crypto.randomBytes(32).toString('hex');
-
-  const hash = crypto.createHash('sha256').update(codeVerifier).digest();
-  const codeChallenge = hash.toString('base64url');
-
-  const authUrl = `https://login.salesforce.com/services/oauth2/authorize?response_type=code&client_id=${process.env.CLIENT_ID}&redirect_uri=${process.env.REDIRECT_URI}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
-
-  res.redirect(authUrl);
+// ✅ Test route
+app.get("/", (req, res) => {
+  res.send("Backend is running 🚀");
 });
 
-// 🔁 Step 2: Callback after login
-app.get('/callback', async (req, res) => {
-  const code = req.query.code;
-
-  try {
-    const response = await axios.post(
-      'https://login.salesforce.com/services/oauth2/token',
-      null,
-      {
-        params: {
-          grant_type: 'authorization_code',
-          client_id: process.env.CLIENT_ID,
-          client_secret: process.env.CLIENT_SECRET,
-          redirect_uri: process.env.REDIRECT_URI,
-          code: code,
-          code_verifier: codeVerifier // ✅ IMPORTANT
-        }
-      }
-    );
-
-    const accessToken = response.data.access_token;
-    const instanceUrl = response.data.instance_url;
-
-    res.redirect(
-  `http://localhost:3000?accessToken=${accessToken}&instanceUrl=${instanceUrl}`
-);
-
-  } catch (error) {
-    console.error(error.response?.data || error);
-    res.send("Error during authentication ❌");
-  }
-});
-
-// 🔹 Fetch Validation Rules
-app.get('/validation-rules', async (req, res) => {
+// 🔥 Fetch validation rules
+app.get("/validation-rules", async (req, res) => {
   const { accessToken, instanceUrl } = req.query;
 
   try {
     const response = await axios.get(
-      `${instanceUrl}/services/data/v58.0/tooling/query`,
+      `${instanceUrl}/services/data/v60.0/tooling/query?q=SELECT Id, ValidationName, Active FROM ValidationRule`,
       {
         headers: {
-          Authorization: `Bearer ${accessToken}`
+          Authorization: `Bearer ${accessToken}`,
         },
-        params: {
-          q: "SELECT Id, ValidationName, Active FROM ValidationRule WHERE EntityDefinition.QualifiedApiName='Account'"
-        }
       }
     );
 
     res.json(response.data.records);
-
   } catch (error) {
-    console.error(error.response?.data || error);
-    res.send("Error fetching validation rules ❌");
+    console.error("Fetch Error:", error.response?.data || error.message);
+    res.status(500).json({ error: "Error fetching rules" });
   }
 });
 
-// 🔹 Toggle Validation Rule
-app.get('/toggle-rule', async (req, res) => {
-  const { accessToken, instanceUrl, ruleId, isActive } = req.query;
+// 🔥 Toggle validation rule
+app.post("/toggle-rule", async (req, res) => {
+  const { ruleId, active, accessToken, instanceUrl } = req.body;
 
   try {
-    // Step 1: Get full metadata
-    const getResponse = await axios.get(
-      `${instanceUrl}/services/data/v58.0/tooling/sobjects/ValidationRule/${ruleId}`,
+    console.log("Toggling rule:", ruleId, "→", active);
+
+    // 1️⃣ Get full metadata
+    const getRes = await axios.get(
+      `${instanceUrl}/services/data/v60.0/tooling/sobjects/ValidationRule/${ruleId}`,
       {
         headers: {
-          Authorization: `Bearer ${accessToken}`
-        }
+          Authorization: `Bearer ${accessToken}`,
+        },
       }
     );
 
-    const metadata = getResponse.data.Metadata;
+    const metadata = getRes.data.Metadata;
 
-    // Step 2: Update active field
-    metadata.active = isActive === 'true';
+    // 2️⃣ Update active value
+    metadata.active = active;
 
-    // Step 3: Update rule
+    // 3️⃣ Send update
     await axios.patch(
-      `${instanceUrl}/services/data/v58.0/tooling/sobjects/ValidationRule/${ruleId}`,
+      `${instanceUrl}/services/data/v60.0/tooling/sobjects/ValidationRule/${ruleId}`,
       {
-        Metadata: metadata
+        Metadata: metadata,
       },
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        }
+          "Content-Type": "application/json",
+        },
       }
     );
 
-    res.send("Validation Rule Updated ✅");
-
+    res.json({ success: true });
   } catch (error) {
-    console.error(error.response?.data || error);
-    res.send("Error updating rule ❌");
+    console.error("Toggle Error:", error.response?.data || error.message);
+    res.status(500).json({ error: "Toggle failed" });
   }
 });
 
-// Test route
-app.get('/', (req, res) => {
-  res.send('Backend is running 🚀');
-});
-
-// 🚀 Start server (KEEP AT END)
+// ✅ Start server
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
